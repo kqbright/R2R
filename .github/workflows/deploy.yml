@@ -52,6 +52,7 @@ jobs:
           AWS_REGION: us-east-2 # Change to your AWS region
           CLUSTER_NAME: ChatMed # Change to your ECS cluster name
           SERVICE_NAME: chatmed-r2r-backend # Change to your ECS service name
+          TASK_FAMILY: chatmed-r2r-backend-task # Change to your task definition family name
           CONTAINER_NAME: r2r-backend # Change to your container name
           IMAGE_TAG: ${{ github.sha }}
           ENV_FILE_PATH: / # This will be used in the container setup
@@ -59,22 +60,44 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: chatmed/r2r-backend
         run: |
-          # Fetch existing task definition
-          TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition $SERVICE_NAME --region $AWS_REGION)
+          # Fetch the current task definition
+          TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --region $AWS_REGION)
           
-          # Update container with new image and pass environment file
-          UPDATED_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" --arg ENV_FILE "$ENV_FILE_PATH" '.taskDefinition |
-          .containerDefinitions[0].image=$IMAGE |
-          .containerDefinitions[0].environment += [
-            {"name": "ENV_FILE_PATH", "value": $ENV_FILE}
-          ] |
-          .requiresCompatibilities = ["FARGATE"] |
-          .networkMode = "awsvpc" |
-          .cpu = "1024" |
-          .memory = "2048"')
+          if [ $? -ne 0 ]; then
+            echo "Failed to fetch task definition. Creating a new one."
+            TASK_DEFINITION=$(cat << EOF
+          {
+            "family": "$TASK_FAMILY",
+            "containerDefinitions": [{
+              "name": "$CONTAINER_NAME",
+              "image": "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "essential": true,
+              "portMappings": [{
+                "containerPort": 80,
+                "hostPort": 80
+              }]
+            }],
+            "requiresCompatibilities": ["FARGATE"],
+            "networkMode": "awsvpc",
+            "cpu": "1024",
+            "memory": "2048"
+          }
+          EOF
+          )
+          else
+            # Update existing task definition
+            TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" --arg ENV_FILE "$ENV_FILE_PATH" '.taskDefinition | 
+            .containerDefinitions[0].image=$IMAGE | 
+            .containerDefinitions[0].environment += [{"name": "ENV_FILE_PATH", "value": $ENV_FILE}] | 
+            del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities)')
+          fi
           
-          # Register updated task definition
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json "$UPDATED_TASK_DEFINITION" --region $AWS_REGION | jq -r '.taskDefinition.taskDefinitionArn')
+          # Register new task definition
+          NEW_TASK_DEF=$(aws ecs register-task-definition --cli-input-json "$TASK_DEFINITION" --region $AWS_REGION)
+          NEW_TASK_DEF_ARN=$(echo $NEW_TASK_DEF | jq -r '.taskDefinition.taskDefinitionArn')
           
           # Update ECS service to use the new task definition
           aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --task-definition $NEW_TASK_DEF_ARN --force-new-deployment --region $AWS_REGION
+
+
+
