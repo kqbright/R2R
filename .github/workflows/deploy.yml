@@ -20,7 +20,7 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
       with:
-        region: us-east-1  # Change this to your AWS region
+        region: us-east-2  # Change this to your AWS region
 
     - name: Download environment file from S3
       env:
