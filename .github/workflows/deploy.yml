@@ -62,7 +62,8 @@ jobs:
       run: |
         # Fetch existing task definition
         echo "$SERVICE_NAME"
-        TASK_DEFINITION=$(aws ecs describe-task-definition --cluster ChatMed --task-definition $SERVICE_NAME )
+        TASK_DEFINITION=$(aws ecs describe-services --cluster $CLUSTER_NAME --services $SERVICE_NAME)
+        echo "$CLUSTER_NAME"
 
         # Update container with new image and pass environment file
         UPDATED_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" --arg ENV_FILE "$ENV_FILE_PATH" '.taskDefinition |
